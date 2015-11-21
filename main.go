@@ -8,7 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,50 +16,56 @@ import (
 	"time"
 )
 
-var httpFlag = flag.String("http", ":8080", "Serve HTTP at given address")
-var httpsFlag = flag.String("https", "", "Serve HTTPS at given address")
-var certFlag = flag.String("cert", "", "Use the provided TLS certificate")
-var keyFlag = flag.String("key", "", "Use the provided TLS key")
+var (
+	addrFlag       = flag.String("addr", ":8080", "Serve HTTP at given address")
+	vanityRootFlag = flag.String("vanity-root", "https://upper.io", "Vanity URL root.")
+	repoRootFlag   = flag.String("repo-root", "https://github.com/upper", "Git HTTPs root")
+)
+
+var repoRoot *RepoRoot
+
+var urlPattern = regexp.MustCompile(`^/(?:([a-zA-Z0-9][-a-zA-Z0-9]+)/?)?([a-zA-Z][-.a-zA-Z0-9]*)\.?((?:v0|v[1-9][0-9]*)(?:\.0|\.[1-9][0-9]*){0,2}(-unstable)?)(?:\.git)?((?:/[a-zA-Z0-9][-.a-zA-Z0-9]*)*)$`)
+
+var packagePattern = regexp.MustCompile(`^/([a-zA-Z0-9]+)\.?(v[1-9][0-9]*)?(.*)$`)
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Could not start server: %q", err)
 	}
 }
 
 func run() error {
 	flag.Parse()
 
+	if *addrFlag == "" {
+		return fmt.Errorf("must provide -addr")
+	}
+
+	if *repoRootFlag == "" {
+		return fmt.Errorf("must provide -repo-root")
+	}
+
+	if *vanityRootFlag == "" {
+		return fmt.Errorf("must provide -vanity-root")
+	}
+
+	var err error
+	if repoRoot, err = NewRepoRoot(*repoRootFlag, *vanityRootFlag); err != nil {
+		return fmt.Errorf("could not parse -repo-root: %q", err)
+	}
+
 	http.HandleFunc("/", handler)
 
-	if *httpFlag == "" && *httpsFlag == "" {
-		return fmt.Errorf("must provide -http and/or -https")
-	}
-	if (*httpsFlag != "" || *certFlag != "" || *keyFlag != "") && (*httpsFlag == "" || *certFlag == "" || *keyFlag == "") {
-		return fmt.Errorf("-https -cert and -key must be used together")
-	}
+	log.Printf("Listening at %s, proxying to %s", *addrFlag, *repoRootFlag)
 
-	ch := make(chan error, 2)
-
-	if *httpFlag != "" {
-		go func() {
-			ch <- http.ListenAndServe(*httpFlag, nil)
-		}()
-	}
-	if *httpsFlag != "" {
-		go func() {
-			ch <- http.ListenAndServeTLS(*httpsFlag, *certFlag, *keyFlag, nil)
-		}()
-	}
-	return <-ch
+	return http.ListenAndServe(*addrFlag, nil)
 }
 
 var gogetTemplate = template.Must(template.New("").Parse(`
 <html>
 <head>
-<meta name="go-import" content="{{.GopkgRoot}} git https://{{.GopkgRoot}}">
-{{$root := .GitHubRoot}}{{$tree := .GitHubTree}}<meta name="go-source" content="{{.GopkgRoot}} _ https://{{$root}}/tree/{{$tree}}{/dir} https://{{$root}}/blob/{{$tree}}{/dir}/{file}#L{line}">
+<meta name="go-import" content="{{.GopkgPath}} git http://{{.GopkgPath}}">
+{{$root := .RepoRoot}}{{$tree := .GitHubTree}}<meta name="go-source" content="{{.GopkgPath}} _ https://{{$root}}/tree/{{$tree}}{/dir} https://{{$root}}/blob/{{$tree}}{/dir}/{file}#L{line}">
 </head>
 <body>
 go get {{.GopkgPath}}
@@ -67,22 +73,51 @@ go get {{.GopkgPath}}
 </html>
 `))
 
+type RepoRoot struct {
+	url        *url.URL
+	SubPath    string
+	VanityPath string
+}
+
+func NewRepoRoot(o string, p string) (*RepoRoot, error) {
+	u, err := url.Parse(o)
+	if err != nil {
+		return nil, err
+	}
+	v, err := url.Parse(p)
+	if err != nil {
+		return nil, err
+	}
+	return &RepoRoot{
+		url:        u,
+		SubPath:    u.Host + u.Path,
+		VanityPath: v.Host + v.Path,
+	}, nil
+}
+
+func (root *RepoRoot) NewRepo(name string) *Repo {
+	return &Repo{
+		Root:        root,
+		Name:        name,
+		FullVersion: InvalidVersion,
+	}
+}
+
 // Repo represents a source code repository on GitHub.
 type Repo struct {
-	User         string
+	Root *RepoRoot
+
 	Name         string
-	SubPath      string
-	OldFormat    bool // The old /v2/pkg format.
 	MajorVersion Version
 
 	// FullVersion is the best version in AllVersions that matches MajorVersion.
 	// It defaults to InvalidVersion if there are no matches.
-	FullVersion    Version
+	FullVersion Version
 
 	// AllVersions holds all versions currently available in the repository,
 	// either coming from branch names or from tag names. Version zero (v0)
 	// is only present in the list if it really exists in the repository.
-	AllVersions    VersionList
+	AllVersions VersionList
 }
 
 // SetVersions records in the relevant fields the details about which
@@ -96,13 +131,13 @@ func (repo *Repo) SetVersions(all []Version) {
 	}
 }
 
-// GitHubRoot returns the repository root at GitHub, without a schema.
-func (repo *Repo) GitHubRoot() string {
-	if repo.User == "" {
-		return "github.com/go-" + repo.Name + "/" + repo.Name
-	} else {
-		return "github.com/" + repo.User + "/" + repo.Name
-	}
+// RepoRoot returns the repository root at GitHub, without a schema.
+func (repo *Repo) RepoRoot() string {
+	return repo.Root.SubPath + "/" + repo.Name
+}
+
+func (repo *Repo) VanityRoot() string {
+	return repo.Root.VanityPath + "/" + repo.Name
 }
 
 // GitHubTree returns the repository tree name at GitHub for the selected version.
@@ -113,14 +148,9 @@ func (repo *Repo) GitHubTree() string {
 	return repo.FullVersion.String()
 }
 
-// GopkgRoot returns the package root at gopkg.in, without a schema.
-func (repo *Repo) GopkgRoot() string {
-	return repo.GopkgVersionRoot(repo.MajorVersion)
-}
-
 // GopkgPath returns the package path at gopkg.in, without a schema.
 func (repo *Repo) GopkgPath() string {
-	return repo.GopkgVersionRoot(repo.MajorVersion) + repo.SubPath
+	return repo.GopkgVersionRoot(repo.MajorVersion)
 }
 
 // GopkgVersionRoot returns the package root in gopkg.in for the
@@ -129,23 +159,8 @@ func (repo *Repo) GopkgVersionRoot(version Version) string {
 	version.Minor = -1
 	version.Patch = -1
 	v := version.String()
-	if repo.OldFormat {
-		if repo.User == "" {
-			return "gopkg.in/" + v + "/" + repo.Name
-		} else {
-			return "gopkg.in/" + repo.User + "/" + v + "/" + repo.Name
-		}
-	} else {
-		if repo.User == "" {
-			return "gopkg.in/" + repo.Name + "." + v
-		} else {
-			return "gopkg.in/" + repo.User + "/" + repo.Name + "." + v
-		}
-	}
+	return repo.VanityRoot() + "." + v
 }
-
-var patternOld = regexp.MustCompile(`^/(?:([a-z0-9][-a-z0-9]+)/)?((?:v0|v[1-9][0-9]*)(?:\.0|\.[1-9][0-9]*){0,2}(-unstable)?)/([a-zA-Z][-a-zA-Z0-9]*)(?:\.git)?((?:/[a-zA-Z][-a-zA-Z0-9]*)*)$`)
-var patternNew = regexp.MustCompile(`^/(?:([a-zA-Z0-9][-a-zA-Z0-9]+)/)?([a-zA-Z][-.a-zA-Z0-9]*)\.((?:v0|v[1-9][0-9]*)(?:\.0|\.[1-9][0-9]*){0,2}(-unstable)?)(?:\.git)?((?:/[a-zA-Z0-9][-.a-zA-Z0-9]*)*)$`)
 
 func handler(resp http.ResponseWriter, req *http.Request) {
 	if req.URL.Path == "/health-check" {
@@ -156,42 +171,30 @@ func handler(resp http.ResponseWriter, req *http.Request) {
 	log.Printf("%s requested %s", req.RemoteAddr, req.URL)
 
 	if req.URL.Path == "/" {
-		resp.Header().Set("Location", "http://labix.org/gopkg.in")
-		resp.WriteHeader(http.StatusTemporaryRedirect)
+		sendNotFound(resp, "Missing package name.")
 		return
 	}
 
-	m := patternNew.FindStringSubmatch(req.URL.Path)
-	oldFormat := false
-	if m == nil {
-		m = patternOld.FindStringSubmatch(req.URL.Path)
-		if m == nil {
-			sendNotFound(resp, "Unsupported URL pattern; see the documentation at gopkg.in for details.")
-			return
-		}
-		// "/v2/name" <= "/name.v2"
-		m[2], m[3] = m[3], m[2]
-		oldFormat = true
-	}
-
-	if strings.Contains(m[3], ".") {
-		sendNotFound(resp, "Import paths take the major version only (.%s instead of .%s); see docs at gopkg.in for the reasoning.",
-			m[3][:strings.Index(m[3], ".")], m[3])
+	u, err := url.Parse(req.URL.Path)
+	if err != nil {
+		sendError(resp, "Failed to parse request path")
 		return
 	}
 
-	repo := &Repo{
-		User:        m[1],
-		Name:        m[2],
-		SubPath:     m[5],
-		OldFormat:   oldFormat,
-		FullVersion: InvalidVersion,
-	}
+	p := packagePattern.FindStringSubmatch(u.Path)
+
+	log.Printf("P: %#v", p)
+
+	pkgName := p[1]
+	version := p[2]
+	extra := p[3]
+
+	repo := repoRoot.NewRepo(pkgName)
 
 	var ok bool
-	repo.MajorVersion, ok = parseVersion(m[3])
+	repo.MajorVersion, ok = parseVersion(version)
 	if !ok {
-		sendNotFound(resp, "Version %q improperly considered invalid; please warn the service maintainers.", m[3])
+		sendNotFound(resp, "Version %q improperly considered invalid; please warn the service maintainers.", version)
 		return
 	}
 
@@ -202,12 +205,13 @@ func handler(resp http.ResponseWriter, req *http.Request) {
 		changed, versions, err = changeRefs(original, repo.MajorVersion)
 		repo.SetVersions(versions)
 	}
+	log.Printf("err: %q", err)
 
 	switch err {
 	case nil:
 		// all ok
 	case ErrNoRepo:
-		sendNotFound(resp, "GitHub repository not found at https://%s", repo.GitHubRoot())
+		sendNotFound(resp, "Git repository not found at https://%s", repo.RepoRoot())
 		return
 	case ErrNoVersion:
 		major := repo.MajorVersion
@@ -217,21 +221,20 @@ func handler(resp http.ResponseWriter, req *http.Request) {
 			suffix = unstableSuffix
 		}
 		v := major.String()
-		sendNotFound(resp, `GitHub repository at https://%s has no branch or tag "%s%s", "%s.N%s" or "%s.N.M%s"`, repo.GitHubRoot(), v, suffix, v, suffix, v, suffix)
+		sendNotFound(resp, `Git repository at https://%s has no branch or tag "%s%s", "%s.N%s" or "%s.N.M%s"`, repo.RepoRoot(), v, suffix, v, suffix, v, suffix)
 		return
 	default:
 		resp.WriteHeader(http.StatusBadGateway)
-		resp.Write([]byte(fmt.Sprintf("Cannot obtain refs from GitHub: %v", err)))
+		resp.Write([]byte(fmt.Sprintf("Cannot obtain refs from Git: %v", err)))
 		return
 	}
 
-	if repo.SubPath == "/git-upload-pack" {
-		resp.Header().Set("Location", "https://"+repo.GitHubRoot()+"/git-upload-pack")
+	switch extra {
+	case `/git-upload-pack`:
+		resp.Header().Set("Location", "https://"+repo.RepoRoot()+"/git-upload-pack")
 		resp.WriteHeader(http.StatusMovedPermanently)
 		return
-	}
-
-	if repo.SubPath == "/info/refs" {
+	case `/info/refs`:
 		resp.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
 		resp.Write(changed)
 		return
@@ -247,7 +250,15 @@ func handler(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	renderPackagePage(resp, req, repo)
+	sendNotFound(resp, "Missing package name.")
+}
+
+func sendError(resp http.ResponseWriter, msg string, args ...interface{}) {
+	if len(args) > 0 {
+		msg = fmt.Sprintf(msg, args...)
+	}
+	resp.WriteHeader(http.StatusInternalServerError)
+	resp.Write([]byte(msg))
 }
 
 func sendNotFound(resp http.ResponseWriter, msg string, args ...interface{}) {
@@ -266,9 +277,11 @@ var ErrNoRepo = errors.New("repository not found in GitHub")
 var ErrNoVersion = errors.New("version reference not found in GitHub")
 
 func fetchRefs(repo *Repo) (data []byte, err error) {
-	resp, err := httpClient.Get("https://" + repo.GitHubRoot() + refsSuffix)
+	repoURL := "https://" + repo.RepoRoot() + refsSuffix
+	log.Printf("url: %v", repoURL)
+	resp, err := httpClient.Get(repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("cannot talk to GitHub: %v", err)
+		return nil, fmt.Errorf("cannot talk to git repository: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -278,12 +291,12 @@ func fetchRefs(repo *Repo) (data []byte, err error) {
 	case 401, 404:
 		return nil, ErrNoRepo
 	default:
-		return nil, fmt.Errorf("error from GitHub: %v", resp.Status)
+		return nil, fmt.Errorf("error from git repository: %v", resp.Status)
 	}
 
 	data, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error reading from GitHub: %v", err)
+		return nil, fmt.Errorf("error reading from git: %v", err)
 	}
 	return data, err
 }
