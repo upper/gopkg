@@ -99,7 +99,11 @@ nice welcome page nor instructions for humans, `vanity` only expects only
 communication from `go get`, if any other kind of request is received it will
 return a `404` error.
 
-But fear not, you can run vanity with `nginx` easily by using that fact:
+But fear not, you can run `vanity` with `nginx` easily by using that fact, plus
+you can have pretty documentation for humans at your custom domain and also be
+able to use the same URL as an import path for `go get` with no effort.
+
+Let's see an example:
 
 ```
 vanity -addr 127.0.0.1:9192 -repo-root https://github.com/upper \
@@ -142,6 +146,26 @@ location @real_location {
   ...
 }
 ```
+
+Let's see it live, use cURL to request `upper.io/db`:
+
+```
+curl "upper.io/db" -L
+...
+```
+
+You'll see some HTML gibberish made for humans, now request it again but this
+time using the `go-get=1` parameter (this is what `go get` does):
+
+```
+curl "upper.io/db?go-get=1" -L
+...
+<meta name="go-import" content="upper.io/db git https://upper.io/db">
+<meta name="go-source" content="upper.io/db _ https://github.com/upper/db/tree/master{/dir} https://github.com/upper/db/blob/master{/dir}/{file}#L{line}">
+...
+```
+
+And you'll see a reduced HTML page with special tags for `go get`.
 
 ## License
 
