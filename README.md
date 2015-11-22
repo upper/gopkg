@@ -1,6 +1,6 @@
 # vanity
 
-Use `vanity` to provide pretty package names on custom domains easily:
+Use `vanity` to provide pretty package names using your own custom domain:
 
 ```go
 import (
