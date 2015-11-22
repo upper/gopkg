@@ -1,7 +1,6 @@
-# vanity package names using custom domains
+# vanity
 
-Use `vanity` to use custom domains on Go packages and redirect them to public
-Git repositories:
+Use `vanity` to provide pretty package names on custom domains easily:
 
 ```go
 import (
