@@ -68,6 +68,7 @@ func (v Version) Contains(other Version) bool {
 	return v.Major == other.Major
 }
 
+// IsValid returns trus if the version is valid.
 func (v Version) IsValid() bool {
 	return v != InvalidVersion
 }
