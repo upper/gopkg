@@ -3,7 +3,7 @@
 Use `vanity` to use custom domains on Go packages and redirect them to public
 Git repositories:
 
-```
+```go
 import (
   "example.org/coolpkg"
 )
@@ -62,7 +62,7 @@ At the end of the `go get` program, you should have the example `hello` package
 on `$GOPATH/src/localhost:8082/example/hello` and in your `$GOPATH/bin`
 directory as well:
 
-```go
+```
 hello
 Hello, Go examples!
 ```
@@ -73,7 +73,7 @@ Hello, Go examples!
 [http://gopkg.in](http://gopkg.in) with no extra cost. For instance, the
 following import
 
-```go
+```
 go get -v example.org/coolpkg.v1
 ```
 
@@ -109,7 +109,7 @@ vanity -addr 127.0.0.1:9192 -repo-root https://github.com/upper \
 
 This is the site configuration for nginx:
 
-```
+```nginx
 location / {
   # First try with vanity.
   try_files =404 @vanity;
