@@ -27,7 +27,7 @@ Now run `vanity` on localhost:
 
 ```
 vanity -addr localhost:8082 -repo-root https://github.com/golang \
--vanity-root http://localhost:8082`
+-vanity-root http://localhost:8082
 ```
 
 Using a different terminal session, try to `go get` a package from
