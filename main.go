@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 
 var (
 	addrFlag       = flag.String("addr", ":8080", "Serve HTTP at given address")
+	socketFlag     = flag.String("socket", "", "Serve HTTP at given UNIX socket")
 	vanityRootFlag = flag.String("vanity-root", "", "Vanity root URL (e.g.: https://upper.io).")
 	repoRootFlag   = flag.String("repo-root", "", "Git repository root URL (e.g.: https://github.com/upper).")
 )
@@ -43,7 +45,7 @@ func main() {
 func run() error {
 	flag.Parse()
 
-	if *addrFlag == "" {
+	if *addrFlag == "" && *socketFlag == "" {
 		return fmt.Errorf("must provide -addr")
 	}
 
@@ -60,11 +62,24 @@ func run() error {
 		return fmt.Errorf("could not parse -repo-root: %q", err)
 	}
 
+	var listenAddr, listenNet string
+
+	if *socketFlag != "" {
+		listenNet, listenAddr = "unix", *socketFlag
+	} else {
+		listenNet, listenAddr = "tcp", *addrFlag
+	}
+
+	li, err := net.Listen(listenNet, listenAddr)
+	if err != nil {
+		return fmt.Errorf("Failed to bind to %s %s: %v", listenNet, listenAddr, err)
+	}
+
 	http.HandleFunc("/", newHandler(repoRoot))
 
-	log.Printf("Listening at %s. %s -> %s", *addrFlag, *vanityRootFlag, *repoRootFlag)
+	log.Printf("Listening at %s. %s -> %s", listenAddr, *vanityRootFlag, *repoRootFlag)
 
-	return http.ListenAndServe(*addrFlag, nil)
+	return http.Serve(li, nil)
 }
 
 var gogetTemplate = template.Must(template.New("").Parse(`
