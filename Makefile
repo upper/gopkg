@@ -3,7 +3,9 @@ GOX_OUTPUT_DIR      ?= bin
 GH_ACCESS_TOKEN     ?= Missing access token.
 MESSAGE             ?= Latest release.
 
-all: clean
+all: build
+
+build: clean
 	@mkdir -p $(GOX_OUTPUT_DIR) && \
 	gox -osarch=$(GOX_OSARCH) -output "$(GOX_OUTPUT_DIR)/{{.Dir}}_{{.OS}}_{{.Arch}}" && \
 	gzip bin/vanity_darwin_* && \
@@ -14,7 +16,7 @@ all: clean
 require-version:
 	@if [[ -z "$$VERSION" ]]; then echo "Missing \$$VERSION"; exit 1; fi
 
-release: require-version
+release: build require-version
 	@RESP=$$(curl --silent --data '{ \
 		"tag_name": "v$(VERSION)", \
 		"name": "v$(VERSION)", \
