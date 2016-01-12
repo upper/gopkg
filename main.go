@@ -24,7 +24,7 @@ var (
 	repoRootFlag   = flag.String("repo-root", "", "Git repository root URL (e.g.: https://github.com/upper).")
 )
 
-var packagePattern = regexp.MustCompile(`^/([a-zA-Z0-9]+)\.?(v[1-9][0-9]*)?(.*)$`)
+var packagePattern = regexp.MustCompile(`^/([-a-zA-Z0-9]+)\.?(v[1-9][0-9]*)?(.*)$`)
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
