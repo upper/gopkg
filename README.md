@@ -1,6 +1,7 @@
 # vanity
 
-Use `vanity` to provide pretty package names using your own custom domain:
+Use `vanity` to provide pretty package import names using your own custom
+domain:
 
 ```go
 import (
@@ -10,7 +11,7 @@ import (
 
 ## A simple example
 
-Let's see the available parameters:
+See the available `vanity` parameters with `-h`:
 
 ```
 vanity -h
@@ -69,7 +70,7 @@ Hello, Go examples!
 ### Versioning support
 
 `vanity` also comes with versioning support from the original
-[http://gopkg.in](http://gopkg.in) with no extra cost. For instance, the
+[http://gopkg.in](http://gopkg.in) at no extra cost. For instance, the
 following import
 
 ```
@@ -154,8 +155,8 @@ curl "upper.io/db" -L
 ...
 ```
 
-You'll see some HTML gibberish made for humans, now request it again but this
-time using the `go-get=1` parameter (this is what `go get` does):
+You'll see some HTML gibberish made for human readers, now request it again but
+this time using the `go-get=1` parameter (that is what `go get` does):
 
 ```
 curl "upper.io/db?go-get=1" -L
