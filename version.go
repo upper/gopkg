@@ -70,34 +70,39 @@ func (v Version) Contains(other Version) bool {
 
 // IsValid returns trus if the version is valid.
 func (v Version) IsValid() bool {
-	return v != InvalidVersion
+	return v != *InvalidVersion
 }
 
-// InvalidVersion represents a version that can't be parsed.
-var InvalidVersion = Version{-1, -1, -1, false}
+var (
+	// InvalidVersion represents a version that can't be parsed.
+	InvalidVersion = &Version{-1, -1, -1, false}
 
-func parseVersion(s string) (v Version, ok bool) {
-	v = InvalidVersion
+	// ZeroVersion represents the zero version.
+	ZeroVersion = &Version{0, 0, 0, false}
+)
+
+func parseVersion(s string) (*Version, bool) {
+	defaultVersion := *InvalidVersion
 	if len(s) < 2 {
-		return
+		return &defaultVersion, false
 	}
 	if s[0] != 'v' {
-		return
+		return &defaultVersion, false
 	}
-	vout := InvalidVersion
+	vout := *InvalidVersion
 	unstable := false
 	i := 1
 	for _, vptr := range []*int{&vout.Major, &vout.Minor, &vout.Patch} {
 		*vptr, unstable, i = parseVersionPart(s, i)
 		if i < 0 {
-			return
+			return &defaultVersion, false
 		}
 		if i == len(s) {
 			vout.Unstable = unstable
-			return vout, true
+			return &vout, true
 		}
 	}
-	return
+	return &defaultVersion, true
 }
 
 func parseVersionPart(s string, i int) (part int, unstable bool, newi int) {

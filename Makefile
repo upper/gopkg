@@ -1,6 +1,6 @@
 GOX_OSARCH          ?= "darwin/amd64 linux/amd64 linux/arm freebsd/386 freebsd/amd64 linux/386 windows/386"
 GOX_OUTPUT_DIR      ?= bin
-GH_ACCESS_TOKEN     ?= Missing access token.
+GH_ACCESS_TOKEN     ?=
 MESSAGE             ?= Latest release.
 
 all: build
@@ -16,7 +16,10 @@ build: clean
 require-version:
 	@if [[ -z "$$VERSION" ]]; then echo "Missing \$$VERSION"; exit 1; fi
 
-release: build require-version
+require-access-token:
+	@if [[ -z "$(GH_ACCESS_TOKEN)" ]]; then echo "Missing \$$GH_ACCESS_TOKEN"; exit 1; fi
+
+release: require-version require-access-token build
 	@RESP=$$(curl --silent --data '{ \
 		"tag_name": "v$(VERSION)", \
 		"name": "v$(VERSION)", \
