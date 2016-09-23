@@ -1,0 +1,19 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "butr+Orbf1fd1hcLqNXYwUDAjcI=",
+			"path": "github.com/coreos/go-semver/semver",
+			"revision": "8ab6407b697782a06568d4b7f1db25550ec2e4c6",
+			"revisionTime": "2016-07-13T22:46:27Z"
+		},
+		{
+			"checksumSHA1": "UD3Xnjdx6vWSFVmKUopMjuTwuz0=",
+			"path": "gopkg.in/check.v1",
+			"revision": "11d3bc7aa68e238947792f30573146a3231fc0f1",
+			"revisionTime": "2015-07-29T08:04:31Z"
+		}
+	],
+	"rootPath": "github.com/xiam/vanity"
+}
