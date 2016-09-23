@@ -15,6 +15,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/coreos/go-semver/semver"
 )
 
 var (
@@ -24,7 +26,7 @@ var (
 	repoRootFlag   = flag.String("repo-root", "", "Git repository root URL (e.g.: https://github.com/upper).")
 )
 
-var packagePattern = regexp.MustCompile(`^/([-a-zA-Z0-9]+)\.?(v[1-9][0-9]*)?(.*)$`)
+var packagePattern = regexp.MustCompile(`^/([-a-zA-Z0-9]+)\.?(v([0-9]*))?(.*)$`)
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
@@ -136,9 +138,8 @@ func NewRepoRoot(repoURL string, vanityURL string) (*RepoRoot, error) {
 // NewRepo creates a new repository.
 func (root *RepoRoot) NewRepo(name string) *Repo {
 	return &Repo{
-		Root:        root,
-		Name:        name,
-		FullVersion: InvalidVersion,
+		Root: root,
+		Name: name,
 	}
 }
 
@@ -146,25 +147,27 @@ func (root *RepoRoot) NewRepo(name string) *Repo {
 type Repo struct {
 	Root *RepoRoot
 
-	Name         string
-	MajorVersion Version
+	Name  string
+	Major string
+
+	RequestedVersion semver.Version
 
 	// FullVersion is the best version in AllVersions that matches MajorVersion.
 	// It defaults to InvalidVersion if there are no matches.
-	FullVersion Version
+	FullVersion *semver.Version
 
 	// AllVersions holds all versions currently available in the repository,
 	// either coming from branch names or from tag names. Version zero (v0)
 	// is only present in the list if it really exists in the repository.
-	AllVersions VersionList
+	AllVersions semver.Versions
 }
 
 // SetVersions records in the relevant fields the details about which
 // package versions are available in the repository.
-func (repo *Repo) SetVersions(all []Version) {
+func (repo *Repo) SetVersions(all semver.Versions) {
 	repo.AllVersions = all
 	for _, v := range repo.AllVersions {
-		if v.Major == repo.MajorVersion.Major && v.Unstable == repo.MajorVersion.Unstable && repo.FullVersion.Less(v) {
+		if v.Major == repo.RequestedVersion.Major && (repo.FullVersion == nil || repo.FullVersion.LessThan(*v)) {
 			repo.FullVersion = v
 		}
 	}
@@ -182,7 +185,7 @@ func (repo *Repo) VanityRoot() string {
 
 // GitTree returns the repository tree name for the selected version.
 func (repo *Repo) GitTree() string {
-	if repo.FullVersion == InvalidVersion {
+	if repo.FullVersion == nil || repo.Major == "" {
 		return "master"
 	}
 	return repo.FullVersion.String()
@@ -190,7 +193,10 @@ func (repo *Repo) GitTree() string {
 
 // VanityPath returns the real package path, without a schema.
 func (repo *Repo) VanityPath() string {
-	return repo.VanityVersionRoot(repo.MajorVersion)
+	if repo.Major == "" {
+		return repo.VanityRoot()
+	}
+	return repo.VanityRoot() + ".v" + repo.Major
 }
 
 // VanityURL returns the vanity package's URL.
@@ -203,25 +209,12 @@ func (repo *Repo) RepoRootURL() string {
 	return repo.Root.repoURL.Scheme + "://" + repo.RepoRoot()
 }
 
-// VanityVersionRoot returns the package's vanity root for the provided
-// version, without a schema.
-func (repo *Repo) VanityVersionRoot(version Version) string {
-	version.Minor = -1
-	version.Patch = -1
-	v := version.String()
-	if v == "v0" {
-		return repo.VanityRoot()
-	}
-	return repo.VanityRoot() + "." + v
-}
-
 func newHandler(repoRoot *RepoRoot) func(http.ResponseWriter, *http.Request) {
 	return func(resp http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/health-check" {
 			resp.Write([]byte("ok"))
 			return
 		}
-
 		log.Printf("%s requested %s", req.RemoteAddr, req.URL)
 
 		if req.URL.Path == "/" {
@@ -237,28 +230,20 @@ func newHandler(repoRoot *RepoRoot) func(http.ResponseWriter, *http.Request) {
 
 		p := packagePattern.FindStringSubmatch(u.Path)
 
-		pkgName := p[1]
-		version := p[2]
-		extra := p[3]
-
+		pkgName, _, version, extra := p[1], p[2], p[3], p[4]
 		repo := repoRoot.NewRepo(pkgName)
 
-		if version == "" {
-			version = "v0"
-		}
-
-		var ok bool
-		repo.MajorVersion, ok = parseVersion(version)
-		if !ok {
-			sendNotFound(resp, "Version %q improperly considered invalid; please warn the service maintainers.", version)
-			return
+		var requestedVersion semver.Version
+		if version != "" {
+			repo.Major = version
+			repo.RequestedVersion.Major, _ = strconv.ParseInt(repo.Major, 10, 64)
 		}
 
 		var changed []byte
-		var versions VersionList
+		var versions semver.Versions
 		original, err := fetchRefs(repo)
 		if err == nil {
-			changed, versions, err = changeRefs(original, repo.MajorVersion)
+			changed, versions, err = changeRefs(original, &repo.RequestedVersion)
 			repo.SetVersions(versions)
 		}
 
@@ -269,14 +254,7 @@ func newHandler(repoRoot *RepoRoot) func(http.ResponseWriter, *http.Request) {
 			sendNotFound(resp, "Git repository not found at https://%s", repo.RepoRoot())
 			return
 		case ErrNoVersion:
-			major := repo.MajorVersion
-			suffix := ""
-			if major.Unstable {
-				major.Unstable = false
-				suffix = unstableSuffix
-			}
-			v := major.String()
-			sendNotFound(resp, `Git repository at https://%s has no branch or tag "%s%s", "%s.N%s" or "%s.N.M%s"`, repo.RepoRoot(), v, suffix, v, suffix, v, suffix)
+			sendNotFound(resp, `Git repository at https://%s has no tag %v`, repo.RepoRoot(), requestedVersion)
 			return
 		default:
 			resp.WriteHeader(http.StatusBadGateway)
@@ -349,16 +327,16 @@ func fetchRefs(repo *Repo) (data []byte, err error) {
 	return data, err
 }
 
-func changeRefs(data []byte, major Version) (changed []byte, versions VersionList, err error) {
+func changeRefs(data []byte, major *semver.Version) (changed []byte, versions semver.Versions, err error) {
 	var hlinei, hlinej int // HEAD reference line start/end
 	var mlinei, mlinej int // master reference line start/end
 	var vrefhash string
 	var vrefname string
-	var vrefv = InvalidVersion
+	var vrefv *semver.Version
 
 	// Record all available versions, the locations of the master and HEAD lines,
 	// and details of the best reference satisfying the requested major version.
-	versions = make([]Version, 0)
+	versions = semver.Versions{}
 	sdata := string(data)
 	for i, j := 0, 0; i < len(data); i = j {
 		size, err := strconv.ParseInt(sdata[i:i+4], 16, 32)
@@ -402,26 +380,23 @@ func changeRefs(data []byte, major Version) (changed []byte, versions VersionLis
 			mlinej = j
 		}
 
-		if strings.HasPrefix(name, "refs/heads/v") || strings.HasPrefix(name, "refs/tags/v") {
-			if strings.HasSuffix(name, "^{}") {
-				// Annotated tag is peeled off and overrides the same version just parsed.
-				name = name[:len(name)-3]
+		if strings.HasPrefix(name, "refs/tags/v") {
+			if !strings.HasSuffix(name, "^{}") {
+				continue // Only accept annotated tags.
 			}
-			v, ok := parseVersion(name[strings.IndexByte(name, 'v'):])
-			if ok && major.Contains(v) && (v == vrefv || !vrefv.IsValid() || vrefv.Less(v)) {
-				vrefv = v
-				vrefhash = sdata[hashi:hashj]
-				vrefname = name
-			}
-			if ok {
+			// Annotated tag is peeled off and overrides the same version just parsed.
+			name = name[:len(name)-3]
+
+			v, err := semver.NewVersion(name[strings.IndexByte(name, 'v')+1:])
+			if err == nil {
 				versions = append(versions, v)
+				if major.Major == v.Major && (vrefv == nil || v == vrefv || vrefv.LessThan(*v)) {
+					vrefv = v
+					vrefhash = sdata[hashi:hashj]
+					vrefname = name
+				}
 			}
 		}
-	}
-
-	// If v0 was requested, accept the master as-is.
-	if major == (Version{0, -1, -1, false}) {
-		return data, nil, nil
 	}
 
 	// If the file has no HEAD line or the version was not found, report as unavailable.
