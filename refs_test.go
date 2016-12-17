@@ -5,6 +5,8 @@ import (
 	"fmt"
 	. "gopkg.in/check.v1"
 	"sort"
+
+	"github.com/coreos/go-semver/semver"
 )
 
 var _ = Suite(&RefsSuite{})
@@ -173,9 +175,9 @@ func (s *RefsSuite) TestChangeRefs(c *C) {
 	for _, test := range refsTests {
 		c.Logf(test.summary)
 
-		v, ok := parseVersion(test.version)
-		if !ok {
-			c.Fatalf("Test has an invalid version: %q", test.version)
+		v, err := semver.NewVersion(test.version)
+		if err != nil {
+			c.Fatalf("Test has an invalid version: %q: %v", test.version, err)
 		}
 
 		changed, versions, err := changeRefs([]byte(test.original), v)

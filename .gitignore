@@ -1,2 +1,4 @@
 bin/
 *.sw?
+vendor/
+vanity
