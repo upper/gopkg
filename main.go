@@ -264,8 +264,41 @@ func newHandler(repoRoot *RepoRoot) func(http.ResponseWriter, *http.Request) {
 
 		switch extra {
 		case `/git-upload-pack`:
-			resp.Header().Set("Location", "https://"+repo.RepoRoot()+"/git-upload-pack")
-			resp.WriteHeader(http.StatusMovedPermanently)
+			proxyURL := "https://" + repo.RepoRoot() + "/git-upload-pack"
+
+			proxyReq, err := http.NewRequest(req.Method, proxyURL, req.Body)
+			if err != nil {
+				resp.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			for k, v := range req.Header {
+				proxyReq.Header[k] = v
+			}
+
+			proxyRes, err := http.DefaultClient.Do(proxyReq)
+			if err != nil {
+				log.Printf("Proxy: %v", err)
+				resp.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			defer proxyRes.Body.Close()
+
+			for k, v := range proxyRes.Header {
+				resp.Header()[k] = v
+			}
+
+			buf, err := ioutil.ReadAll(proxyRes.Body)
+			if err != nil {
+				log.Printf("Proxy: %v", err)
+				resp.WriteHeader(http.StatusBadGateway)
+				return
+			}
+
+			if _, err = resp.Write(buf); err != nil {
+				log.Printf("Proxy: %v", err)
+				resp.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			return
 		case `/info/refs`:
 			resp.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
