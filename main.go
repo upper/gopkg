@@ -175,7 +175,7 @@ func (repo *Repo) SetVersions(all semver.Versions) {
 
 // RepoRoot returns the repository root, without a schema.
 func (repo *Repo) RepoRoot() string {
-	return repo.Root.RepoHostPath + "/" + repo.Name
+	return repo.Root.RepoHostPath + "/go-" + repo.Name
 }
 
 // VanityRoot returns the vanity repository root, without a schema.
