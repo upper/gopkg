@@ -1,19 +1,18 @@
-FROM debian:jessie
+FROM golang:1.17-bullseye AS builder
 
-RUN apt-get update
+RUN mkdir -p /go/src/github.com/xiam/vanity
+WORKDIR /go/src/github.com/xiam/vanity
 
-RUN apt-get install -y curl
+COPY . .
 
-ENV VANITY_VERSION 0.1.3
+RUN go build -o /go/bin/vanity .
 
-ENV VANITY_URL https://github.com/xiam/vanity/releases/download/v${VANITY_VERSION}/vanity_linux_amd64.gz
+FROM debian:bullseye
 
-RUN curl --silent -L ${VANITY_URL} | gzip -d > /bin/vanity
+RUN apt-get update && \
+  apt-get install -y ca-certificates file --no-install-recommends
 
-RUN chmod +x /bin/vanity
+COPY --from=builder /go/bin/vanity /bin/
 
-RUN mkdir -p /var/run/vanity
-
-EXPOSE 8080
-
+EXPOSE 9001
 ENTRYPOINT ["/bin/vanity"]
