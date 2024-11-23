@@ -11,7 +11,6 @@ docker-build:
 docker-run: docker-build
 	(docker rm -f $(CONTAINER_NAME) || exit 0) && \
 	docker run \
-		-p 0.0.0.0:9001:9001 \
 		--name $(CONTAINER_NAME) \
 		-t $(IMAGE_NAME):$(GIT_SHORTHASH)
 
